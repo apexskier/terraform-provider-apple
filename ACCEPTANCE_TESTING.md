@@ -40,11 +40,11 @@ Assuming every test passes and every destroy completes:
 |---|---|---|
 | **Permanent** | 2 | Device registrations that can never be removed — one iOS, one Mac. Terraform disables them; they still occupy slots until the membership year renews. |
 | **Transient peak** | 2 | Certificates alive at once, at most. Tests run sequentially and each revokes what it issued. |
-| **Net zero** | 17 | Resource kinds fully cleaned up: Bundle IDs, capabilities, Merchant IDs, Pass Type IDs, profiles, subscription groups, subscriptions, localizations, prices, in-app purchases, their localizations, price schedules and availability, beta groups, their build assignments and both TestFlight localizations. |
+| **Net zero** | 18 | Resource kinds fully cleaned up: Bundle IDs, capabilities, Merchant IDs, Pass Type IDs, profiles, subscription groups, subscriptions, localizations, prices, introductory offers, in-app purchases, their localizations, price schedules and availability, beta groups, their build assignments and both TestFlight localizations. |
 | **Opt-in residue** | 1 | A beta tester record in the account, if `APPLE_TEST_BETA_TESTER_EMAIL` is set. The membership is removed; the record is not — see [TestFlight](#testflight). |
 | **Opt-in removal** | 1 | A team member removed from Users and Access, if `APPLE_TEST_USER_EMAIL` and `APPLE_TEST_ALLOW_USER_REMOVAL` are both set. They have to be invited again — see [Team members](#team-members-users-and-access). |
-| **Reserved forever** | ~13 | Subscription and in-app purchase product identifiers, randomised per run. Invisible once deleted, drawn from an unlimited namespace — see [Subscriptions](#subscriptions) and [In-app purchases](#in-app-purchases). |
-| **Touch nothing** | 29 | Tests rejected at plan time or read-only. |
+| **Reserved forever** | ~15 | Subscription and in-app purchase product identifiers, randomised per run. Invisible once deleted, drawn from an unlimited namespace — see [Subscriptions](#subscriptions) and [In-app purchases](#in-app-purchases). |
+| **Touch nothing** | 30 | Tests rejected at plan time or read-only. |
 
 ### Certificates come back; devices do not
 
@@ -233,6 +233,9 @@ convention differs here.
 | `TestAccSubscriptionResource_basic` | Net zero | A group plus one subscription; renames it and changes its period from `ONE_MONTH` to `ONE_YEAR`; imports by bare ID. | A subscription appears inside the group showing *Missing Metadata*, its name and duration change, then both are deleted. |
 | `TestAccSubscriptionResource_completesMetadata` | Net zero | A group, a subscription, an `en-US` localization, a USA availability, and a USA price read from the price point catalogue. Imports all three children. | A subscription that leaves *Missing Metadata* once its name and price are set. All of it is then deleted. |
 | `TestAccSubscriptionPriceScheduleResource_basic` | Net zero | A group, a subscription, a USA+GBR availability, and a price schedule carrying a USA price plus the GBR point Apple equalizes from it — written in a single `PATCH`. Imports by the subscription ID, then adds a future-dated USA increase. | A subscription priced in two storefronts at once, then in three. All of it is then deleted. |
+| `TestAccSubscriptionIntroductoryOfferResource_basic` | Net zero | A group, a complete subscription (localization, USA availability and price), and a one-week USA free trial. Imports it as `<subscription>/<offer>`, then sets an `end_date` in place. | A subscription with a free trial under *Introductory Offers*, which gains an end date. All of it is then deleted. |
+| `TestAccSubscriptionIntroductoryOfferResource_freeTrialRejectsPricePoint` | Plan-only | Nothing. | No change. |
+| `TestAccSubscriptionIntroductoryOfferScheduleResource_basic` | Net zero | A group, a subscription priced in USA and GBR, and an offer schedule holding a USA free trial and a GBR pay-as-you-go offer, created in one `PATCH`. Imports by the subscription ID, then turns the GBR offer into pay-up-front. | Two introductory offers appear at once; the GBR one is deleted and replaced. All of it is then deleted. |
 | `TestAccSubscriptionReviewScreenshotResource_basic` | Net zero | A group, a subscription, and a generated 1290×2796 PNG uploaded as its App Store review screenshot; replaced by a second image of a different colour; imported by the subscription ID. | A review screenshot appears under the subscription, is swapped for another, then goes with the subscription. |
 | `TestAccSubscriptionResource_requiresReplace` | Net zero | A group plus a subscription, replaced by one with a different product ID. **Consumes two identifiers rather than one.** | One subscription appears, then is destroyed and replaced by another. |
 | `TestAccSubscriptionResource_validation` | Plan-only | Nothing. | No change. |
@@ -282,6 +285,18 @@ which is why the test is still net zero. The price is the other: once it is in
 effect Apple deletes only future price changes, so `terraform destroy` warns and
 drops it from state, and the subscription's own deletion is what actually
 removes it.
+
+The introductory offer tests check Apple's offer count rather than state, for
+two reasons particular to these resources. Apple publishes no `GET` for a
+single offer, so both resources read by listing the subscription's offers.
+And whether the `introductoryOffers` relationship on
+`PATCH /v1/subscriptions/{id}` replaces the set or appends to it has not been
+confirmed: the schedule names the offers it keeps as well as the new ones so
+that either works, and `testAccCheckIntroductoryOfferCount` catches it if
+neither does. The schedule test's update changes the GBR offer's mode, which
+Apple cannot do in place, so it also exercises the delete-before-create order
+a territory's one-offer-at-a-time rule requires. The singular test's update
+step is the only check that Apple accepts a `PATCH` of `endDate`.
 
 ## In-app purchases
 

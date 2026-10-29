@@ -6,6 +6,7 @@ package apple
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -650,5 +651,242 @@ func TestSetSubscriptionPricesOmitsUnsetTerritory(t *testing.T) {
 	relationships, _ := entry["relationships"].(map[string]any)
 	if _, present := relationships["territory"]; present {
 		t.Errorf("territory relationship sent for a price that named none: %v", relationships["territory"])
+	}
+}
+
+// TestCreateSubscriptionIntroductoryOfferRequestShape checks that a free trial
+// sends no price point relationship and a paid offer sends one. ResourceIdentifier
+// marshals an unset value as {"type":"","id":""}, which Apple rejects.
+func TestCreateSubscriptionIntroductoryOfferRequestShape(t *testing.T) {
+	tests := []struct {
+		name           string
+		offer          SubscriptionIntroductoryOfferInput
+		wantPricePoint bool
+	}{
+		{
+			name: "free trial",
+			offer: SubscriptionIntroductoryOfferInput{
+				TerritoryID:     "USA",
+				OfferMode:       models.SubscriptionOfferModeFreeTrial,
+				Duration:        models.SubscriptionOfferDurationOneWeek,
+				NumberOfPeriods: 1,
+			},
+		},
+		{
+			name: "pay as you go",
+			offer: SubscriptionIntroductoryOfferInput{
+				TerritoryID:     "GBR",
+				OfferMode:       models.SubscriptionOfferModePayAsYouGo,
+				Duration:        models.SubscriptionOfferDurationOneMonth,
+				NumberOfPeriods: 3,
+				PricePointID:    "point-gbr",
+			},
+			wantPricePoint: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				body   map[string]any
+				method string
+				path   string
+			)
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method, path = r.Method, r.URL.Path
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decoding request body: %s", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"data":{"type":"subscriptionIntroductoryOffers","id":"offer-1","attributes":{}}}`)
+			}))
+			defer srv.Close()
+
+			offer, err := newTestClient(srv).CreateSubscriptionIntroductoryOffer("sub-1", tt.offer, nil)
+			if err != nil {
+				t.Fatalf("CreateSubscriptionIntroductoryOffer: %s", err)
+			}
+			if offer.ID != "offer-1" {
+				t.Errorf("id = %q, want offer-1", offer.ID)
+			}
+			if method != "POST" || path != "/v1/subscriptionIntroductoryOffers" {
+				t.Errorf("request = %s %s, want POST /v1/subscriptionIntroductoryOffers", method, path)
+			}
+
+			data, _ := body["data"].(map[string]any)
+			attrs, _ := data["attributes"].(map[string]any)
+			if attrs["offerMode"] != string(tt.offer.OfferMode) {
+				t.Errorf("offerMode = %v, want %q", attrs["offerMode"], tt.offer.OfferMode)
+			}
+			if attrs["duration"] != string(tt.offer.Duration) {
+				t.Errorf("duration = %v, want %q", attrs["duration"], tt.offer.Duration)
+			}
+			if attrs["numberOfPeriods"] != float64(tt.offer.NumberOfPeriods) {
+				t.Errorf("numberOfPeriods = %v, want %d", attrs["numberOfPeriods"], tt.offer.NumberOfPeriods)
+			}
+			for _, unset := range []string{"startDate", "endDate", "targetSubscriptionPlanType"} {
+				if _, present := attrs[unset]; present {
+					t.Errorf("%s sent although unset: %v", unset, attrs[unset])
+				}
+			}
+
+			relationships, _ := data["relationships"].(map[string]any)
+			territory, _ := relationships["territory"].(map[string]any)
+			territoryData, _ := territory["data"].(map[string]any)
+			if territoryData["id"] != tt.offer.TerritoryID {
+				t.Errorf("territory = %v, want %q", territoryData["id"], tt.offer.TerritoryID)
+			}
+
+			_, present := relationships["subscriptionPricePoint"]
+			if present != tt.wantPricePoint {
+				t.Errorf("subscriptionPricePoint present = %v, want %v", present, tt.wantPricePoint)
+			}
+		})
+	}
+}
+
+// TestGetSubscriptionIntroductoryOfferSendsFilters checks the listing that
+// stands in for the single-offer GET Apple does not publish.
+func TestGetSubscriptionIntroductoryOfferSendsFilters(t *testing.T) {
+	var (
+		gotQuery url.Values
+		gotPath  string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery, gotPath = r.URL.Query(), r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"type":"subscriptionIntroductoryOffers","id":"offer-1",
+			"attributes":{"offerMode":"FREE_TRIAL","duration":"ONE_WEEK","numberOfPeriods":1},
+			"relationships":{"territory":{"data":{"type":"territories","id":"USA"}}}}]}`)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv)
+
+	offer, err := client.GetSubscriptionIntroductoryOffer("sub-1", "USA", "offer-1")
+	if err != nil {
+		t.Fatalf("GetSubscriptionIntroductoryOffer: %s", err)
+	}
+	if gotPath != "/v1/subscriptions/sub-1/introductoryOffers" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if got := gotQuery.Get("include"); got != "territory,subscriptionPricePoint" {
+		t.Errorf("include = %q", got)
+	}
+	if got := gotQuery.Get("filter[territory]"); got != "USA" {
+		t.Errorf("filter[territory] = %q, want USA", got)
+	}
+	if offer.Attributes.OfferMode == nil || *offer.Attributes.OfferMode != models.SubscriptionOfferModeFreeTrial {
+		t.Errorf("offerMode = %v, want FREE_TRIAL", offer.Attributes.OfferMode)
+	}
+
+	if _, err := client.GetSubscriptionIntroductoryOffer("sub-1", "", "offer-2"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("missing offer error = %v, want one containing \"not found\"", err)
+	}
+	if gotQuery.Has("filter[territory]") {
+		t.Errorf("filter[territory] sent with no territory: %q", gotQuery.Get("filter[territory]"))
+	}
+}
+
+// TestUpdateSubscriptionIntroductoryOfferEndDateSendsNull checks that clearing
+// an end date sends an explicit null rather than omitting the member, which
+// would leave the old date in place.
+func TestUpdateSubscriptionIntroductoryOfferEndDateSendsNull(t *testing.T) {
+	var (
+		raw    string
+		method string
+		path   string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		raw = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"type":"subscriptionIntroductoryOffers","id":"offer-1","attributes":{}}}`)
+	}))
+	defer srv.Close()
+
+	if _, err := newTestClient(srv).UpdateSubscriptionIntroductoryOfferEndDate("offer-1", nil, nil); err != nil {
+		t.Fatalf("UpdateSubscriptionIntroductoryOfferEndDate: %s", err)
+	}
+	if method != "PATCH" || path != "/v1/subscriptionIntroductoryOffers/offer-1" {
+		t.Errorf("request = %s %s", method, path)
+	}
+	if !strings.Contains(raw, `"attributes":{"endDate":null}`) {
+		t.Errorf("body = %s, want an explicit null endDate", raw)
+	}
+}
+
+// TestAddSubscriptionIntroductoryOffersRequestShape pins the bulk offer write:
+// kept offers are named by their real IDs, new ones by placeholders that each
+// resolve to an included member.
+func TestAddSubscriptionIntroductoryOffersRequestShape(t *testing.T) {
+	var (
+		body   map[string]any
+		method string
+		path   string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request body: %s", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"type":"subscriptions","id":"sub-1","attributes":{}}}`)
+	}))
+	defer srv.Close()
+
+	if _, err := newTestClient(srv).AddSubscriptionIntroductoryOffers("sub-1", []string{"existing-1"}, []SubscriptionIntroductoryOfferInput{
+		{TerritoryID: "USA", OfferMode: models.SubscriptionOfferModeFreeTrial, Duration: models.SubscriptionOfferDurationOneWeek, NumberOfPeriods: 1},
+		{TerritoryID: "GBR", OfferMode: models.SubscriptionOfferModePayUpFront, Duration: models.SubscriptionOfferDurationThreeMonths, NumberOfPeriods: 1, PricePointID: "point-gbr"},
+	}, nil); err != nil {
+		t.Fatalf("AddSubscriptionIntroductoryOffers: %s", err)
+	}
+
+	if method != "PATCH" || path != "/v1/subscriptions/sub-1" {
+		t.Errorf("request = %s %s, want PATCH /v1/subscriptions/sub-1", method, path)
+	}
+
+	data, _ := body["data"].(map[string]any)
+	if _, present := data["attributes"]; present {
+		t.Errorf("attributes member sent on the subscription: %v", data["attributes"])
+	}
+	relationships, _ := data["relationships"].(map[string]any)
+	offersRel, _ := relationships["introductoryOffers"].(map[string]any)
+	linkage, _ := offersRel["data"].([]any)
+
+	var ids []string
+	for _, member := range linkage {
+		entry, _ := member.(map[string]any)
+		if entry["type"] != "subscriptionIntroductoryOffers" {
+			t.Errorf("linkage type = %v", entry["type"])
+		}
+		ids = append(ids, fmt.Sprint(entry["id"]))
+	}
+	if want := "existing-1,${offer0},${offer1}"; strings.Join(ids, ",") != want {
+		t.Errorf("linkage = %v, want %s", ids, want)
+	}
+
+	included, _ := body["included"].([]any)
+	if len(included) != 2 {
+		t.Fatalf("got %d included members, want 2", len(included))
+	}
+	for i, member := range included {
+		entry, _ := member.(map[string]any)
+		if want := fmt.Sprintf("${offer%d}", i); entry["id"] != want {
+			t.Errorf("included %d id = %v, want %s", i, entry["id"], want)
+		}
+		rels, _ := entry["relationships"].(map[string]any)
+		if _, ok := rels["subscription"]; !ok {
+			t.Errorf("included %d is missing the subscription relationship", i)
+		}
+		_, hasPoint := rels["subscriptionPricePoint"]
+		if hasPoint != (i == 1) {
+			t.Errorf("included %d subscriptionPricePoint present = %v", i, hasPoint)
+		}
 	}
 }

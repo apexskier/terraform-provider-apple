@@ -56,6 +56,32 @@ resource "apple_subscription_availability" "com_example_app_monthly" {
 }
 
 import {
+  to = apple_subscription_introductory_offer_schedule.com_example_app_monthly
+  id = "SUB1"
+}
+resource "apple_subscription_introductory_offer_schedule" "com_example_app_monthly" {
+  subscription_id = apple_subscription.com_example_app_monthly.id
+  offers = [
+    {
+      duration          = "ONE_MONTH"
+      end_date          = "2027-01-31"
+      number_of_periods = 3
+      offer_mode        = "PAY_AS_YOU_GO"
+      price_point_id    = "spp-gbr-intro"
+      start_date        = "2026-11-01"
+      territory_id      = "GBR"
+    },
+    {
+      duration          = "ONE_WEEK"
+      number_of_periods = 1
+      offer_mode        = "FREE_TRIAL"
+      territory_id      = "USA"
+    },
+  ]
+  depends_on = [apple_subscription_availability.com_example_app_monthly]
+}
+
+import {
   to = apple_subscription_price_schedule.com_example_app_monthly
   id = "SUB1"
 }

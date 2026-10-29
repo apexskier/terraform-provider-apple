@@ -204,6 +204,18 @@ func (f *fakeAccount) GetSubscriptionAvailableTerritories(string) ([]models.Terr
 	return []models.Territory{{ID: "USA"}, {ID: "GBR"}}, nil
 }
 
+func (f *fakeAccount) GetSubscriptionIntroductoryOffers(string, []string) ([]models.SubscriptionIntroductoryOffer, error) {
+	return []models.SubscriptionIntroductoryOffer{
+		{ID: "SIO2", Attributes: models.SubscriptionIntroductoryOfferAttributes{
+			OfferMode: ptr(models.SubscriptionOfferModePayAsYouGo), Duration: ptr(models.SubscriptionOfferDurationOneMonth), NumberOfPeriods: ptr(3),
+			StartDate: ptr("2026-11-01"), EndDate: ptr("2027-01-31"),
+		}, Relationships: &models.SubscriptionIntroductoryOfferRelationships{Territory: id("territories", "GBR"), SubscriptionPricePoint: id("subscriptionPricePoints", "spp-gbr-intro")}},
+		{ID: "SIO1", Attributes: models.SubscriptionIntroductoryOfferAttributes{
+			OfferMode: ptr(models.SubscriptionOfferModeFreeTrial), Duration: ptr(models.SubscriptionOfferDurationOneWeek), NumberOfPeriods: ptr(1),
+		}, Relationships: &models.SubscriptionIntroductoryOfferRelationships{Territory: id("territories", "USA")}},
+	}, nil
+}
+
 func (f *fakeAccount) GetInAppPurchases(string) ([]models.InAppPurchase, error) {
 	return []models.InAppPurchase{{ID: "IAP1", Attributes: models.InAppPurchaseAttributes{
 		Name: "Pro Unlock", ProductID: "com.example.app.pro", InAppPurchaseType: ptr(models.InAppPurchaseType("NON_CONSUMABLE")), FamilySharable: ptr(true),

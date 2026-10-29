@@ -126,6 +126,10 @@ func (e *exporter) exportSubscription(f *file, group address, subscription model
 		return err
 	}
 
+	if err := e.exportSubscriptionIntroductoryOffers(f, subscription, addr, availability); err != nil {
+		return err
+	}
+
 	prices, err := e.src.GetSubscriptionPrices(subscription.ID)
 	if err != nil {
 		return e.failed("the prices of "+productID, err)
@@ -172,6 +176,83 @@ func (e *exporter) exportSubscription(f *file, group address, subscription model
 	e.note(Attention, saddr.String(),
 		"Every price Apple holds for %s is listed, past ones included. Apple deletes only future price changes, so to change a price add a new one with a later start_date rather than editing or removing a live one.", productID)
 
+	return nil
+}
+
+// exportSubscriptionIntroductoryOffers mirrors the introductory offer
+// schedule's ImportState: every offer Apple holds, with Apple's own values, and
+// a free trial's price point left out because the import records it null.
+//
+// One schedule, never an apple_subscription_introductory_offer per offer: the
+// schedule removes any offer it does not list, so the two would fight.
+func (e *exporter) exportSubscriptionIntroductoryOffers(f *file, subscription models.Subscription, subscriptionAddr address, availability *address) error {
+	productID := subscription.Attributes.ProductID
+
+	offers, err := e.src.GetSubscriptionIntroductoryOffers(subscription.ID, nil)
+	if err != nil {
+		return e.failed("the introductory offers of "+productID, err)
+	}
+	if len(offers) == 0 {
+		return nil
+	}
+
+	objects := make([]map[string]cty.Value, 0, len(offers))
+	for _, offer := range offers {
+		attributes := offer.Attributes
+		object := map[string]cty.Value{
+			"territory_id":                  cty.NullVal(cty.String),
+			"offer_mode":                    cty.NullVal(cty.String),
+			"duration":                      cty.NullVal(cty.String),
+			"number_of_periods":             cty.NullVal(cty.Number),
+			"price_point_id":                cty.NullVal(cty.String),
+			"start_date":                    optString(attributes.StartDate),
+			"end_date":                      optString(attributes.EndDate),
+			"target_subscription_plan_type": cty.NullVal(cty.String),
+		}
+		if offer.Relationships != nil {
+			if t := offer.Relationships.Territory; t != nil && t.Data.ID != "" {
+				object["territory_id"] = cty.StringVal(t.Data.ID)
+			}
+			if p := offer.Relationships.SubscriptionPricePoint; p != nil && p.Data.ID != "" {
+				object["price_point_id"] = cty.StringVal(p.Data.ID)
+			}
+		}
+		if attributes.OfferMode != nil {
+			object["offer_mode"] = cty.StringVal(string(*attributes.OfferMode))
+		}
+		if attributes.Duration != nil {
+			object["duration"] = cty.StringVal(string(*attributes.Duration))
+		}
+		if attributes.NumberOfPeriods != nil {
+			object["number_of_periods"] = cty.NumberIntVal(int64(*attributes.NumberOfPeriods))
+		}
+		if attributes.TargetSubscriptionPlanType != nil {
+			object["target_subscription_plan_type"] = cty.StringVal(string(*attributes.TargetSubscriptionPlanType))
+		}
+		objects = append(objects, object)
+	}
+	// Apple's order carries no meaning for a set; sorting keeps the output
+	// stable from one export to the next.
+	sortKey := func(object map[string]cty.Value) string {
+		key := ""
+		for _, name := range []string{"territory_id", "start_date"} {
+			if v := object[name]; !v.IsNull() {
+				key += v.AsString()
+			}
+			key += "\x00"
+		}
+		return key
+	}
+	sort.SliceStable(objects, func(i, j int) bool {
+		return sortKey(objects[i]) < sortKey(objects[j])
+	})
+
+	b, _ := e.resource(f, "apple_subscription_introductory_offer_schedule", subscription.ID, subscription.ID, productID)
+	b.set("subscription_id", ref(subscriptionAddr.traversal("id")))
+	b.objects("offers", objects)
+	if availability != nil {
+		b.body.SetAttributeRaw("depends_on", tupleOfTraversals(availability.traversal()))
+	}
 	return nil
 }
 

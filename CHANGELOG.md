@@ -1,5 +1,30 @@
 ## Unreleased
 
+FEATURES:
+
+* **`apple_subscription_introductory_offer` and
+  `apple_subscription_introductory_offer_schedule`.** Introductory offers on an
+  auto-renewable subscription: a free trial, a reduced price per period, or a
+  reduced price paid once (#14).
+
+  ```terraform
+  resource "apple_subscription_introductory_offer" "trial" {
+    subscription_id   = apple_subscription.pro_monthly.id
+    territory_id      = "USA"
+    offer_mode        = "FREE_TRIAL"
+    duration          = "ONE_WEEK"
+    number_of_periods = 1
+  }
+  ```
+
+  Apple keeps one offer per territory. The singular resource manages one.
+  The schedule manages every offer of a subscription and creates new ones in
+  a single request, which is the practical way to offer a trial in all 175
+  storefronts. Only `end_date` changes in place; any other change replaces the
+  offer. Import is `<subscription_id>/<offer_id>` for the singular resource and
+  the subscription ID for the schedule. `apple terraform export` writes a
+  schedule for every subscription that has offers.
+
 BUG FIXES:
 
 * **Importing an `apple_profile` no longer plans its reissue.** The import

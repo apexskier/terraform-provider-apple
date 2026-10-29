@@ -40,6 +40,7 @@ type Source interface {
 	GetSubscriptionPrices(subscriptionID string) ([]models.SubscriptionPrice, error)
 	GetSubscriptionAvailability(subscriptionID string) (*models.SubscriptionAvailability, error)
 	GetSubscriptionAvailableTerritories(availabilityID string) ([]models.Territory, error)
+	GetSubscriptionIntroductoryOffers(subscriptionID string, territories []string) ([]models.SubscriptionIntroductoryOffer, error)
 	GetInAppPurchases(appID string) ([]models.InAppPurchase, error)
 	GetInAppPurchaseVersions(purchaseID string) ([]models.InAppPurchaseVersion, error)
 	GetInAppPurchaseLocalizations(versionID string) ([]models.InAppPurchaseLocalization, error)

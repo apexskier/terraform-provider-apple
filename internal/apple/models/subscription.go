@@ -495,3 +495,160 @@ type SubscriptionAvailabilityCreateRelationships struct {
 	Subscription         ResourceIdentifier  `json:"subscription"`
 	AvailableTerritories ResourceIdentifiers `json:"availableTerritories"`
 }
+
+// --- Subscription introductory offers ---
+
+// Subscription offer mode enumeration.
+//
+// FREE_TRIAL charges nothing for the offer's duration. PAY_AS_YOU_GO charges a
+// reduced price each billing period for numberOfPeriods periods, and
+// PAY_UP_FRONT charges a reduced price once for the whole duration. The two paid
+// modes are the only ones that reference a price point.
+type SubscriptionOfferMode string
+
+const (
+	SubscriptionOfferModePayAsYouGo SubscriptionOfferMode = "PAY_AS_YOU_GO"
+	SubscriptionOfferModePayUpFront SubscriptionOfferMode = "PAY_UP_FRONT"
+	SubscriptionOfferModeFreeTrial  SubscriptionOfferMode = "FREE_TRIAL"
+)
+
+// ValidSubscriptionOfferModes lists the accepted offer modes.
+var ValidSubscriptionOfferModes = []string{
+	string(SubscriptionOfferModePayAsYouGo),
+	string(SubscriptionOfferModePayUpFront),
+	string(SubscriptionOfferModeFreeTrial),
+}
+
+// Subscription offer duration enumeration.
+//
+// A wider set than SubscriptionPeriod: a free trial can run for three days or
+// two weeks, which no subscription can.
+type SubscriptionOfferDuration string
+
+const (
+	SubscriptionOfferDurationThreeDays   SubscriptionOfferDuration = "THREE_DAYS"
+	SubscriptionOfferDurationOneWeek     SubscriptionOfferDuration = "ONE_WEEK"
+	SubscriptionOfferDurationTwoWeeks    SubscriptionOfferDuration = "TWO_WEEKS"
+	SubscriptionOfferDurationOneMonth    SubscriptionOfferDuration = "ONE_MONTH"
+	SubscriptionOfferDurationTwoMonths   SubscriptionOfferDuration = "TWO_MONTHS"
+	SubscriptionOfferDurationThreeMonths SubscriptionOfferDuration = "THREE_MONTHS"
+	SubscriptionOfferDurationSixMonths   SubscriptionOfferDuration = "SIX_MONTHS"
+	SubscriptionOfferDurationOneYear     SubscriptionOfferDuration = "ONE_YEAR"
+)
+
+// ValidSubscriptionOfferDurations lists the accepted offer durations.
+var ValidSubscriptionOfferDurations = []string{
+	string(SubscriptionOfferDurationThreeDays),
+	string(SubscriptionOfferDurationOneWeek),
+	string(SubscriptionOfferDurationTwoWeeks),
+	string(SubscriptionOfferDurationOneMonth),
+	string(SubscriptionOfferDurationTwoMonths),
+	string(SubscriptionOfferDurationThreeMonths),
+	string(SubscriptionOfferDurationSixMonths),
+	string(SubscriptionOfferDurationOneYear),
+}
+
+// SubscriptionIntroductoryOffer is one introductory offer in one territory.
+//
+// Apple publishes no GET /v1/subscriptionIntroductoryOffers/{id}: an offer is
+// readable only through the collection hanging off its subscription.
+type SubscriptionIntroductoryOffer struct {
+	Type          string                                      `json:"type"`
+	ID            string                                      `json:"id"`
+	Attributes    SubscriptionIntroductoryOfferAttributes     `json:"attributes"`
+	Relationships *SubscriptionIntroductoryOfferRelationships `json:"relationships,omitempty"`
+	Links         *ResourceLinks                              `json:"links,omitempty"`
+}
+
+// SubscriptionIntroductoryOfferAttributes covers what is sent and returned.
+//
+// startDate and endDate are plain dates (YYYY-MM-DD), like a price's startDate.
+type SubscriptionIntroductoryOfferAttributes struct {
+	StartDate                  *string                    `json:"startDate,omitempty"`
+	EndDate                    *string                    `json:"endDate,omitempty"`
+	Duration                   *SubscriptionOfferDuration `json:"duration,omitempty"`
+	OfferMode                  *SubscriptionOfferMode     `json:"offerMode,omitempty"`
+	NumberOfPeriods            *int                       `json:"numberOfPeriods,omitempty"`
+	TargetSubscriptionPlanType *SubscriptionPlanType      `json:"targetSubscriptionPlanType,omitempty"`
+}
+
+// SubscriptionIntroductoryOfferRelationships is populated only for the members
+// a request names in include.
+type SubscriptionIntroductoryOfferRelationships struct {
+	Subscription           *ResourceIdentifier `json:"subscription,omitempty"`
+	Territory              *ResourceIdentifier `json:"territory,omitempty"`
+	SubscriptionPricePoint *ResourceIdentifier `json:"subscriptionPricePoint,omitempty"`
+}
+
+type SubscriptionIntroductoryOfferCreateRequest struct {
+	Type          string                                           `json:"type"`
+	Attributes    SubscriptionIntroductoryOfferCreateAttributes    `json:"attributes"`
+	Relationships SubscriptionIntroductoryOfferCreateRelationships `json:"relationships"`
+}
+
+// SubscriptionIntroductoryOfferCreateAttributes always carries the three
+// members Apple requires, so unlike a price's attributes it is never empty.
+type SubscriptionIntroductoryOfferCreateAttributes struct {
+	Duration                   SubscriptionOfferDuration `json:"duration"`
+	OfferMode                  SubscriptionOfferMode     `json:"offerMode"`
+	NumberOfPeriods            int                       `json:"numberOfPeriods"`
+	StartDate                  *string                   `json:"startDate,omitempty"`
+	EndDate                    *string                   `json:"endDate,omitempty"`
+	TargetSubscriptionPlanType *SubscriptionPlanType     `json:"targetSubscriptionPlanType,omitempty"`
+}
+
+// SubscriptionIntroductoryOfferCreateRelationships leaves the price point out
+// for a free trial, which has none. ResourceIdentifier marshals an unset value
+// as {"type":"","id":""}, which Apple rejects, hence the pointers.
+type SubscriptionIntroductoryOfferCreateRelationships struct {
+	Subscription           ResourceIdentifier  `json:"subscription"`
+	Territory              *ResourceIdentifier `json:"territory,omitempty"`
+	SubscriptionPricePoint *ResourceIdentifier `json:"subscriptionPricePoint,omitempty"`
+}
+
+type SubscriptionIntroductoryOfferUpdateRequest struct {
+	Type       string                                        `json:"type"`
+	ID         string                                        `json:"id"`
+	Attributes SubscriptionIntroductoryOfferUpdateAttributes `json:"attributes"`
+}
+
+// SubscriptionIntroductoryOfferUpdateAttributes holds endDate, the only member
+// of Apple's update request.
+//
+// It is deliberately not omitempty: an end date removed from a configuration is
+// sent as an explicit null, where an omitted member would leave the old date in
+// place. Whether Apple accepts a null endDate is unverified against the live
+// API.
+type SubscriptionIntroductoryOfferUpdateAttributes struct {
+	EndDate *string `json:"endDate"`
+}
+
+// SubscriptionIntroductoryOffersUpdateRequest adds introductory offers to a
+// subscription in one request.
+//
+// The same shape as SubscriptionPricesUpdateRequest, and a separate type from
+// SubscriptionUpdateRequest for the same reason: that one sends a non-optional
+// attributes member. The new offers travel inline in "included" under
+// placeholder IDs of the form "${offer0}".
+type SubscriptionIntroductoryOffersUpdateRequest struct {
+	Data     SubscriptionIntroductoryOffersUpdateData    `json:"data"`
+	Included []SubscriptionIntroductoryOfferInlineCreate `json:"included,omitempty"`
+}
+
+type SubscriptionIntroductoryOffersUpdateData struct {
+	Type          string                                            `json:"type"`
+	ID            string                                            `json:"id"`
+	Relationships SubscriptionIntroductoryOffersUpdateRelationships `json:"relationships"`
+}
+
+type SubscriptionIntroductoryOffersUpdateRelationships struct {
+	IntroductoryOffers ResourceIdentifiers `json:"introductoryOffers"`
+}
+
+// SubscriptionIntroductoryOfferInlineCreate is one offer inside "included".
+type SubscriptionIntroductoryOfferInlineCreate struct {
+	Type          string                                           `json:"type"`
+	ID            string                                           `json:"id"`
+	Attributes    SubscriptionIntroductoryOfferCreateAttributes    `json:"attributes"`
+	Relationships SubscriptionIntroductoryOfferCreateRelationships `json:"relationships"`
+}

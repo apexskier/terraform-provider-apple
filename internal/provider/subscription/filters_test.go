@@ -545,3 +545,219 @@ func TestReconcileSchedulePricesSkipsPricesWithoutAPricePoint(t *testing.T) {
 		t.Fatalf("got %d prices, want 0: neither reported a price point", len(reconciled))
 	}
 }
+
+func strPtr(s string) *string { return &s }
+
+// apiOffer builds an offer as Apple reports it.
+func apiOffer(id, territory string, mode models.SubscriptionOfferMode, duration models.SubscriptionOfferDuration, periods int, pricePoint string) models.SubscriptionIntroductoryOffer {
+	offer := models.SubscriptionIntroductoryOffer{
+		ID: id,
+		Attributes: models.SubscriptionIntroductoryOfferAttributes{
+			OfferMode:       &mode,
+			Duration:        &duration,
+			NumberOfPeriods: &periods,
+		},
+		Relationships: &models.SubscriptionIntroductoryOfferRelationships{
+			Territory: &models.ResourceIdentifier{Data: models.ResourceData{Type: "territories", ID: territory}},
+		},
+	}
+	if pricePoint != "" {
+		offer.Relationships.SubscriptionPricePoint = &models.ResourceIdentifier{
+			Data: models.ResourceData{Type: "subscriptionPricePoints", ID: pricePoint},
+		}
+	}
+	return offer
+}
+
+// offerEntry builds a configured schedule entry with nothing optional set.
+func offerEntry(territory string, mode models.SubscriptionOfferMode, duration models.SubscriptionOfferDuration, periods int64, pricePoint string) subscriptionIntroductoryOfferScheduleEntry {
+	entry := subscriptionIntroductoryOfferScheduleEntry{
+		TerritoryID:                types.StringValue(territory),
+		OfferMode:                  types.StringValue(string(mode)),
+		Duration:                   types.StringValue(string(duration)),
+		NumberOfPeriods:            types.Int64Value(periods),
+		PricePointID:               types.StringNull(),
+		StartDate:                  types.StringNull(),
+		EndDate:                    types.StringNull(),
+		TargetSubscriptionPlanType: types.StringNull(),
+	}
+	if pricePoint != "" {
+		entry.PricePointID = types.StringValue(pricePoint)
+	}
+	return entry
+}
+
+func TestIntroductoryOfferPricePointProblem(t *testing.T) {
+	tests := []struct {
+		mode          string
+		hasPricePoint bool
+		wantProblem   bool
+	}{
+		{"FREE_TRIAL", false, false},
+		{"FREE_TRIAL", true, true},
+		{"PAY_AS_YOU_GO", true, false},
+		{"PAY_AS_YOU_GO", false, true},
+		{"PAY_UP_FRONT", true, false},
+		{"PAY_UP_FRONT", false, true},
+	}
+	for _, tt := range tests {
+		got := introductoryOfferPricePointProblem(tt.mode, tt.hasPricePoint) != ""
+		if got != tt.wantProblem {
+			t.Errorf("%s with price point %v: problem = %v, want %v", tt.mode, tt.hasPricePoint, got, tt.wantProblem)
+		}
+	}
+}
+
+func TestPlanIntroductoryOffers(t *testing.T) {
+	const (
+		free  = models.SubscriptionOfferModeFreeTrial
+		payGo = models.SubscriptionOfferModePayAsYouGo
+		week  = models.SubscriptionOfferDurationOneWeek
+		month = models.SubscriptionOfferDurationOneMonth
+	)
+
+	t.Run("matching offers are kept, the rest removed and created", func(t *testing.T) {
+		existing := []models.SubscriptionIntroductoryOffer{
+			apiOffer("usa", "USA", free, week, 1, ""),
+			apiOffer("gbr", "GBR", payGo, month, 3, "point-gbr"),
+		}
+		planned := []subscriptionIntroductoryOfferScheduleEntry{
+			offerEntry("USA", free, week, 1, ""),
+			offerEntry("GBR", payGo, month, 2, "point-gbr"),
+		}
+
+		plan := planIntroductoryOffers(planned, existing, nil)
+		if len(plan.Keep) != 1 || plan.Keep[0].ID != "usa" || plan.Keep[0].EndDateChanged {
+			t.Errorf("keep = %+v, want usa unchanged", plan.Keep)
+		}
+		if len(plan.Remove) != 1 || plan.Remove[0] != "gbr" {
+			t.Errorf("remove = %v, want [gbr]", plan.Remove)
+		}
+		if len(plan.Create) != 1 || plan.Create[0].NumberOfPeriods.ValueInt64() != 2 {
+			t.Errorf("create = %+v, want the two-period GBR offer", plan.Create)
+		}
+	})
+
+	t.Run("a dated entry claims its offer before an undated one", func(t *testing.T) {
+		later := apiOffer("later", "USA", free, week, 1, "")
+		later.Attributes.StartDate = strPtr("2027-06-01")
+		current := apiOffer("current", "USA", free, week, 1, "")
+		current.Attributes.StartDate = strPtr("2026-10-01")
+		existing := []models.SubscriptionIntroductoryOffer{later, current}
+
+		dated := offerEntry("USA", free, week, 1, "")
+		dated.StartDate = types.StringValue("2027-06-01")
+		planned := []subscriptionIntroductoryOfferScheduleEntry{offerEntry("USA", free, week, 1, ""), dated}
+
+		plan := planIntroductoryOffers(planned, existing, nil)
+		if len(plan.Keep) != 2 || len(plan.Remove) != 0 || len(plan.Create) != 0 {
+			t.Errorf("plan = %+v, want both offers kept", plan)
+		}
+	})
+
+	t.Run("a different end date is an update, not a new offer", func(t *testing.T) {
+		existing := []models.SubscriptionIntroductoryOffer{apiOffer("usa", "USA", free, week, 1, "")}
+		existing[0].Attributes.EndDate = strPtr("2027-01-31")
+
+		entry := offerEntry("USA", free, week, 1, "")
+		entry.EndDate = types.StringValue("2027-02-28")
+
+		plan := planIntroductoryOffers([]subscriptionIntroductoryOfferScheduleEntry{entry}, existing, nil)
+		if len(plan.Keep) != 1 || !plan.Keep[0].EndDateChanged {
+			t.Errorf("keep = %+v, want usa with a changed end date", plan.Keep)
+		}
+		if len(plan.Remove) != 0 || len(plan.Create) != 0 {
+			t.Errorf("remove = %v, create = %v, want neither", plan.Remove, plan.Create)
+		}
+	})
+
+	t.Run("an end date set outside Terraform is cleared only if state managed it", func(t *testing.T) {
+		existing := []models.SubscriptionIntroductoryOffer{apiOffer("usa", "USA", free, week, 1, "")}
+		existing[0].Attributes.EndDate = strPtr("2027-01-31")
+		planned := []subscriptionIntroductoryOfferScheduleEntry{offerEntry("USA", free, week, 1, "")}
+
+		// Never configured: Read never showed it, so a write must not clear it.
+		unmanaged := managedEndDateOffers([]subscriptionIntroductoryOfferScheduleEntry{offerEntry("USA", free, week, 1, "")}, existing)
+		if plan := planIntroductoryOffers(planned, existing, unmanaged); plan.Keep[0].EndDateChanged {
+			t.Error("an end date state never held was cleared")
+		}
+
+		// Configured before and removed from the configuration now: clear it.
+		prior := offerEntry("USA", free, week, 1, "")
+		prior.EndDate = types.StringValue("2027-01-31")
+		managed := managedEndDateOffers([]subscriptionIntroductoryOfferScheduleEntry{prior}, existing)
+		if plan := planIntroductoryOffers(planned, existing, managed); !plan.Keep[0].EndDateChanged {
+			t.Error("an end date removed from the configuration was not cleared")
+		}
+	})
+
+	t.Run("an unset start date matches whatever Apple reports", func(t *testing.T) {
+		existing := []models.SubscriptionIntroductoryOffer{apiOffer("usa", "USA", free, week, 1, "")}
+		existing[0].Attributes.StartDate = strPtr("2026-10-29")
+
+		plan := planIntroductoryOffers([]subscriptionIntroductoryOfferScheduleEntry{offerEntry("USA", free, week, 1, "")}, existing, nil)
+		if len(plan.Keep) != 1 {
+			t.Errorf("keep = %+v, want the offer matched", plan.Keep)
+		}
+
+		dated := offerEntry("USA", free, week, 1, "")
+		dated.StartDate = types.StringValue("2026-11-01")
+		plan = planIntroductoryOffers([]subscriptionIntroductoryOfferScheduleEntry{dated}, existing, nil)
+		if len(plan.Keep) != 0 || len(plan.Create) != 1 || len(plan.Remove) != 1 {
+			t.Errorf("plan = %+v, want a configured start date to replace the offer", plan)
+		}
+	})
+
+	t.Run("each offer satisfies one entry", func(t *testing.T) {
+		existing := []models.SubscriptionIntroductoryOffer{apiOffer("usa", "USA", free, week, 1, "")}
+		planned := []subscriptionIntroductoryOfferScheduleEntry{
+			offerEntry("USA", free, week, 1, ""),
+			offerEntry("USA", free, week, 1, ""),
+		}
+
+		plan := planIntroductoryOffers(planned, existing, nil)
+		if len(plan.Keep) != 1 || len(plan.Create) != 1 {
+			t.Errorf("keep = %d, create = %d, want 1 and 1", len(plan.Keep), len(plan.Create))
+		}
+	})
+}
+
+func TestReconcileIntroductoryOffers(t *testing.T) {
+	free := models.SubscriptionOfferModeFreeTrial
+	week := models.SubscriptionOfferDurationOneWeek
+
+	usa := apiOffer("usa", "USA", free, week, 1, "")
+	usa.Attributes.StartDate = strPtr("2026-10-29")
+	usa.Attributes.EndDate = strPtr("2027-03-31")
+	manual := apiOffer("can", "CAN", models.SubscriptionOfferModePayUpFront, models.SubscriptionOfferDurationThreeMonths, 1, "point-can")
+
+	configured := offerEntry("USA", free, week, 1, "")
+	configured.EndDate = types.StringValue("2027-01-31")
+	gone := offerEntry("GBR", free, week, 1, "")
+
+	got := reconcileIntroductoryOffers([]subscriptionIntroductoryOfferScheduleEntry{configured, gone}, []models.SubscriptionIntroductoryOffer{usa, manual})
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(got), got)
+	}
+
+	kept := got[0]
+	if !kept.StartDate.IsNull() {
+		t.Errorf("start_date = %s, want the configured null kept", kept.StartDate)
+	}
+	if kept.EndDate.ValueString() != "2027-03-31" {
+		t.Errorf("end_date = %s, want Apple's 2027-03-31 refreshed", kept.EndDate)
+	}
+
+	adopted := got[1]
+	if adopted.TerritoryID.ValueString() != "CAN" || adopted.PricePointID.ValueString() != "point-can" {
+		t.Errorf("adopted = %+v, want the CAN offer with its price point", adopted)
+	}
+
+	imported := reconcileIntroductoryOffers(nil, []models.SubscriptionIntroductoryOffer{usa})
+	if !imported[0].PricePointID.IsNull() {
+		t.Errorf("free trial price_point_id = %s, want null", imported[0].PricePointID)
+	}
+	if imported[0].StartDate.ValueString() != "2026-10-29" {
+		t.Errorf("imported start_date = %s, want Apple's", imported[0].StartDate)
+	}
+}

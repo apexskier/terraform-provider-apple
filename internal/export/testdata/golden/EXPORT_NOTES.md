@@ -8,7 +8,7 @@ terraform init
 terraform plan
 ```
 
-The plan should report **33 to import, 0 to add, 0 to change, 0 to destroy**. Anything else is something the export got wrong. Do not apply a plan that destroys or replaces anything; fix the configuration first. Once applied, the `import` blocks can be deleted.
+The plan should report **34 to import, 0 to add, 0 to change, 0 to destroy**. Anything else is something the export got wrong. Do not apply a plan that destroys or replaces anything; fix the configuration first. Once applied, the `import` blocks can be deleted.
 
 ## Imported
 
@@ -39,6 +39,7 @@ The plan should report **33 to import, 0 to add, 0 to change, 0 to destroy**. An
 | `apple_subscription_availability` | 1 |
 | `apple_subscription_group` | 1 |
 | `apple_subscription_group_localization` | 1 |
+| `apple_subscription_introductory_offer_schedule` | 1 |
 | `apple_subscription_localization` | 1 |
 | `apple_subscription_price_schedule` | 1 |
 | `apple_user` | 1 |

@@ -160,6 +160,7 @@ and there is deliberately no `apple_app` resource.
 | `apple_subscription_localization` | — | Customer-facing subscription name and description |
 | `apple_subscription_price` | `apple_subscription_price_points` | Subscription prices, per territory |
 | `apple_subscription_availability` | — | The territories a subscription sells in |
+| `apple_subscription_introductory_offer` | — | Free trials and introductory prices, per territory (`apple_subscription_introductory_offer_schedule` sets them all at once) |
 | `apple_in_app_purchase` | `apple_in_app_purchases` | One-time purchases: consumables, non-consumables, non-renewing subscriptions |
 | `apple_in_app_purchase_localization` | — | Customer-facing purchase name and description |
 | `apple_in_app_purchase_price_schedule` | `apple_in_app_purchase_price_points` | The price of a one-time purchase |

@@ -119,6 +119,44 @@ type subscriptionAvailabilityModel struct {
 	AvailableTerritories      []types.String `tfsdk:"available_territories"`
 }
 
+// subscriptionIntroductoryOfferModel maps the per-territory introductory offer
+// schema.
+type subscriptionIntroductoryOfferModel struct {
+	ID                         types.String `tfsdk:"id"`
+	SubscriptionID             types.String `tfsdk:"subscription_id"`
+	TerritoryID                types.String `tfsdk:"territory_id"`
+	OfferMode                  types.String `tfsdk:"offer_mode"`
+	Duration                   types.String `tfsdk:"duration"`
+	NumberOfPeriods            types.Int64  `tfsdk:"number_of_periods"`
+	PricePointID               types.String `tfsdk:"price_point_id"`
+	StartDate                  types.String `tfsdk:"start_date"`
+	EndDate                    types.String `tfsdk:"end_date"`
+	TargetSubscriptionPlanType types.String `tfsdk:"target_subscription_plan_type"`
+}
+
+// subscriptionIntroductoryOfferScheduleModel maps the bulk schedule: every
+// introductory offer of one subscription.
+type subscriptionIntroductoryOfferScheduleModel struct {
+	ID             types.String                                 `tfsdk:"id"`
+	SubscriptionID types.String                                 `tfsdk:"subscription_id"`
+	Offers         []subscriptionIntroductoryOfferScheduleEntry `tfsdk:"offers"`
+}
+
+// subscriptionIntroductoryOfferScheduleEntry is one offer inside that schedule.
+//
+// It carries no id, for the reason subscriptionSchedulePriceModel carries none:
+// a computed attribute inside a set makes the element unknown at plan time.
+type subscriptionIntroductoryOfferScheduleEntry struct {
+	TerritoryID                types.String `tfsdk:"territory_id"`
+	OfferMode                  types.String `tfsdk:"offer_mode"`
+	Duration                   types.String `tfsdk:"duration"`
+	NumberOfPeriods            types.Int64  `tfsdk:"number_of_periods"`
+	PricePointID               types.String `tfsdk:"price_point_id"`
+	StartDate                  types.String `tfsdk:"start_date"`
+	EndDate                    types.String `tfsdk:"end_date"`
+	TargetSubscriptionPlanType types.String `tfsdk:"target_subscription_plan_type"`
+}
+
 // subscriptionGroupsDataSourceModel maps the listing data source for groups.
 type subscriptionGroupsDataSourceModel struct {
 	// Scope
@@ -227,6 +265,12 @@ var (
 
 	// PlanTypeValidator validates the price plan type.
 	PlanTypeValidator = stringvalidator.OneOf(models.ValidSubscriptionPlanTypes...)
+
+	// OfferModeValidator validates an introductory offer mode.
+	OfferModeValidator = stringvalidator.OneOf(models.ValidSubscriptionOfferModes...)
+
+	// OfferDurationValidator validates an introductory offer duration.
+	OfferDurationValidator = stringvalidator.OneOf(models.ValidSubscriptionOfferDurations...)
 
 	// LocaleValidator validates an App Store locale code.
 	//
