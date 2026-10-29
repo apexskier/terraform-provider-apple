@@ -146,7 +146,8 @@ Rules that are easy to undo by accident:
   first. Introductory offers follow the same rule: one
   `apple_subscription_introductory_offer_schedule` per subscription that has
   any, never `apple_subscription_introductory_offer`, because the schedule
-  removes the offers it does not list.
+  removes the offers it does not list. It `depends_on` the availability and
+  the price schedule, because a paid offer is a price.
 - **Screenshots and review screenshots are left out.** The paths cannot be
   recovered and Apple's checksum would not match a re-downloaded file.
 - **Demo account passwords are sensitive variables defaulting to null.** The

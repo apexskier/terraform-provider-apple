@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/AhmedOsman00/terraform-provider-apple/internal/apple/models"
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -126,16 +127,27 @@ func (e *exporter) exportSubscription(f *file, group address, subscription model
 		return err
 	}
 
-	if err := e.exportSubscriptionIntroductoryOffers(f, subscription, addr, availability); err != nil {
+	priceSchedule, err := e.exportSubscriptionPriceSchedule(f, subscription, addr, availability)
+	if err != nil {
 		return err
 	}
 
+	// Offers come after both: an offer is refused in a territory the
+	// subscription is not available in, and a paid offer is a price.
+	return e.exportSubscriptionIntroductoryOffers(f, subscription, addr, availability, priceSchedule)
+}
+
+// exportSubscriptionPriceSchedule writes the subscription's prices, returning
+// the schedule's address, or nil when the subscription has none.
+func (e *exporter) exportSubscriptionPriceSchedule(f *file, subscription models.Subscription, addr address, availability *address) (*address, error) {
+	productID := subscription.Attributes.ProductID
+
 	prices, err := e.src.GetSubscriptionPrices(subscription.ID)
 	if err != nil {
-		return e.failed("the prices of "+productID, err)
+		return nil, e.failed("the prices of "+productID, err)
 	}
 	if len(prices) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// One price schedule, never an apple_subscription_price per price: the
@@ -176,7 +188,7 @@ func (e *exporter) exportSubscription(f *file, group address, subscription model
 	e.note(Attention, saddr.String(),
 		"Every price Apple holds for %s is listed, past ones included. Apple deletes only future price changes, so to change a price add a new one with a later start_date rather than editing or removing a live one.", productID)
 
-	return nil
+	return &saddr, nil
 }
 
 // exportSubscriptionIntroductoryOffers mirrors the introductory offer
@@ -185,7 +197,7 @@ func (e *exporter) exportSubscription(f *file, group address, subscription model
 //
 // One schedule, never an apple_subscription_introductory_offer per offer: the
 // schedule removes any offer it does not list, so the two would fight.
-func (e *exporter) exportSubscriptionIntroductoryOffers(f *file, subscription models.Subscription, subscriptionAddr address, availability *address) error {
+func (e *exporter) exportSubscriptionIntroductoryOffers(f *file, subscription models.Subscription, subscriptionAddr address, prerequisites ...*address) error {
 	productID := subscription.Attributes.ProductID
 
 	offers, err := e.src.GetSubscriptionIntroductoryOffers(subscription.ID, nil)
@@ -250,8 +262,15 @@ func (e *exporter) exportSubscriptionIntroductoryOffers(f *file, subscription mo
 	b, _ := e.resource(f, "apple_subscription_introductory_offer_schedule", subscription.ID, subscription.ID, productID)
 	b.set("subscription_id", ref(subscriptionAddr.traversal("id")))
 	b.objects("offers", objects)
-	if availability != nil {
-		b.body.SetAttributeRaw("depends_on", tupleOfTraversals(availability.traversal()))
+
+	var dependencies []hcl.Traversal
+	for _, prerequisite := range prerequisites {
+		if prerequisite != nil {
+			dependencies = append(dependencies, prerequisite.traversal())
+		}
+	}
+	if len(dependencies) > 0 {
+		b.body.SetAttributeRaw("depends_on", tupleOfTraversals(dependencies...))
 	}
 	return nil
 }

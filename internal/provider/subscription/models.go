@@ -290,6 +290,13 @@ var (
 		"Start date must be a plain date in YYYY-MM-DD form, not a timestamp",
 	)
 
+	// EndDateValidator is StartDateValidator for an end date, so the error
+	// names the attribute the user set.
+	EndDateValidator = stringvalidator.RegexMatches(
+		regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`),
+		"End date must be a plain date in YYYY-MM-DD form, not a timestamp",
+	)
+
 	// TerritoryValidator validates a territory code.
 	//
 	// Apple identifies territories by three-letter uppercase code -- USA, GBR,

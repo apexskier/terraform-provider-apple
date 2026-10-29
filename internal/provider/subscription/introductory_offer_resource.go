@@ -156,7 +156,7 @@ func (r *subscriptionIntroductoryOfferResource) Schema(_ context.Context, _ reso
 			"end_date": schema.StringAttribute{
 				MarkdownDescription: introductoryOfferDescriptions["end_date"],
 				Optional:            true,
-				Validators:          []validator.String{StartDateValidator},
+				Validators:          []validator.String{EndDateValidator},
 			},
 			"target_subscription_plan_type": schema.StringAttribute{
 				MarkdownDescription: introductoryOfferDescriptions["target_subscription_plan_type"] + "\n\n" +

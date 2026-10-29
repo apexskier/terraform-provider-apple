@@ -761,3 +761,37 @@ func TestReconcileIntroductoryOffers(t *testing.T) {
 		t.Errorf("imported start_date = %s, want Apple's", imported[0].StartDate)
 	}
 }
+
+// TestPendingEndDates covers recording state after a write that failed before
+// it cleared an end date: the date Apple still holds is kept, so the next plan
+// shows it and the next write retries the clear.
+func TestPendingEndDates(t *testing.T) {
+	free := models.SubscriptionOfferModeFreeTrial
+	week := models.SubscriptionOfferDurationOneWeek
+
+	usa := apiOffer("usa", "USA", free, week, 1, "")
+	usa.Attributes.EndDate = strPtr("2027-01-31")
+	gbr := apiOffer("gbr", "GBR", free, week, 1, "")
+	gbr.Attributes.EndDate = strPtr("2027-02-28")
+	offers := []models.SubscriptionIntroductoryOffer{usa, gbr}
+
+	// State managed USA's end date and the plan removes it. GBR's was set by
+	// hand and never in state.
+	managedPrior := offerEntry("USA", free, week, 1, "")
+	managedPrior.EndDate = types.StringValue("2027-01-31")
+	prior := []subscriptionIntroductoryOfferScheduleEntry{managedPrior, offerEntry("GBR", free, week, 1, "")}
+	planned := []subscriptionIntroductoryOfferScheduleEntry{offerEntry("USA", free, week, 1, ""), offerEntry("GBR", free, week, 1, "")}
+
+	got := reconcileIntroductoryOffers(pendingEndDates(planned, prior, offers), offers)
+	ends := map[string]types.String{}
+	for _, entry := range got {
+		ends[entry.TerritoryID.ValueString()] = entry.EndDate
+	}
+
+	if ends["USA"].ValueString() != "2027-01-31" {
+		t.Errorf("USA end_date = %s, want the uncleared 2027-01-31 recorded", ends["USA"])
+	}
+	if !ends["GBR"].IsNull() {
+		t.Errorf("GBR end_date = %s, want null: state never held it", ends["GBR"])
+	}
+}

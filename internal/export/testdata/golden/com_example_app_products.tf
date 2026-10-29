@@ -56,6 +56,26 @@ resource "apple_subscription_availability" "com_example_app_monthly" {
 }
 
 import {
+  to = apple_subscription_price_schedule.com_example_app_monthly
+  id = "SUB1"
+}
+resource "apple_subscription_price_schedule" "com_example_app_monthly" {
+  subscription_id = apple_subscription.com_example_app_monthly.id
+  prices = [
+    {
+      price_point_id = "spp-gbr"
+      start_date     = "2026-12-01"
+      territory_id   = "GBR"
+    },
+    {
+      price_point_id = "spp-usa"
+      territory_id   = "USA"
+    },
+  ]
+  depends_on = [apple_subscription_availability.com_example_app_monthly]
+}
+
+import {
   to = apple_subscription_introductory_offer_schedule.com_example_app_monthly
   id = "SUB1"
 }
@@ -78,27 +98,7 @@ resource "apple_subscription_introductory_offer_schedule" "com_example_app_month
       territory_id      = "USA"
     },
   ]
-  depends_on = [apple_subscription_availability.com_example_app_monthly]
-}
-
-import {
-  to = apple_subscription_price_schedule.com_example_app_monthly
-  id = "SUB1"
-}
-resource "apple_subscription_price_schedule" "com_example_app_monthly" {
-  subscription_id = apple_subscription.com_example_app_monthly.id
-  prices = [
-    {
-      price_point_id = "spp-gbr"
-      start_date     = "2026-12-01"
-      territory_id   = "GBR"
-    },
-    {
-      price_point_id = "spp-usa"
-      territory_id   = "USA"
-    },
-  ]
-  depends_on = [apple_subscription_availability.com_example_app_monthly]
+  depends_on = [apple_subscription_availability.com_example_app_monthly, apple_subscription_price_schedule.com_example_app_monthly]
 }
 
 import {

@@ -129,7 +129,7 @@ func (r *subscriptionIntroductoryOfferScheduleResource) Schema(_ context.Context
 						"end_date": schema.StringAttribute{
 							MarkdownDescription: introductoryOfferDescriptions["end_date"],
 							Optional:            true,
-							Validators:          []validator.String{StartDateValidator},
+							Validators:          []validator.String{EndDateValidator},
 						},
 						"target_subscription_plan_type": schema.StringAttribute{
 							MarkdownDescription: introductoryOfferDescriptions["target_subscription_plan_type"],
@@ -153,6 +153,10 @@ func (r *subscriptionIntroductoryOfferScheduleResource) ValidateConfig(ctx conte
 		return
 	}
 
+	// Apple starts an offer with no start_date on the day it is created, so two
+	// in one territory would overlap, and a territory holds one at a time.
+	undated := map[string]bool{}
+
 	for _, element := range set.Elements() {
 		// A whole element can be unknown inside a known set, and a struct
 		// cannot hold that. There is nothing to check in it yet; validation
@@ -171,6 +175,20 @@ func (r *subscriptionIntroductoryOfferScheduleResource) ValidateConfig(ctx conte
 		resp.Diagnostics.Append(object.As(ctx, &offer, basetypes.ObjectAsOptions{})...)
 		if resp.Diagnostics.HasError() {
 			return
+		}
+
+		if offer.StartDate.IsNull() && !offer.TerritoryID.IsNull() && !offer.TerritoryID.IsUnknown() {
+			territory := offer.TerritoryID.ValueString()
+			if undated[territory] {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("offers"),
+					"Overlapping Introductory Offers",
+					fmt.Sprintf("More than one offer in territory '%s' has no start_date. Each would start "+
+						"on the day it is created, and a territory holds one introductory offer at a time. "+
+						"Give all but one a start_date after the others end.", territory),
+				)
+			}
+			undated[territory] = true
 		}
 
 		if offer.OfferMode.IsUnknown() || offer.PricePointID.IsUnknown() {
@@ -200,7 +218,7 @@ func (r *subscriptionIntroductoryOfferScheduleResource) Create(ctx context.Conte
 
 	if touched := r.write(ctx, &plan, nil, &resp.Diagnostics); resp.Diagnostics.HasError() {
 		if touched {
-			r.recordCurrent(ctx, plan, &resp.State, &resp.Diagnostics)
+			r.recordCurrent(ctx, plan, nil, &resp.State, &resp.Diagnostics)
 		}
 		return
 	}
@@ -273,7 +291,7 @@ func (r *subscriptionIntroductoryOfferScheduleResource) Update(ctx context.Conte
 
 	if touched := r.write(ctx, &plan, prior.Offers, &resp.Diagnostics); resp.Diagnostics.HasError() {
 		if touched {
-			r.recordCurrent(ctx, plan, &resp.State, &resp.Diagnostics)
+			r.recordCurrent(ctx, plan, prior.Offers, &resp.State, &resp.Diagnostics)
 		}
 		return
 	}
@@ -401,13 +419,15 @@ func (r *subscriptionIntroductoryOfferScheduleResource) write(ctx context.Contex
 		"create": len(changes.Create),
 	})
 
+	// Stop at the first refusal: the write is abandoned either way, and every
+	// further deletion would only take more offers off before it is.
 	for _, id := range changes.Remove {
 		if r.deleteOffer(id, diags) {
 			touched = true
 		}
-	}
-	if diags.HasError() {
-		return touched
+		if diags.HasError() {
+			return touched
+		}
 	}
 
 	keepIDs := make([]string, 0, len(changes.Keep))
@@ -454,7 +474,13 @@ func (r *subscriptionIntroductoryOfferScheduleResource) write(ctx context.Contex
 // state would claim ones already deleted. The next plan then shows exactly
 // what is missing. A subscription left with no offers at all is recorded as
 // gone, the way Read would find it.
-func (r *subscriptionIntroductoryOfferScheduleResource) recordCurrent(ctx context.Context, plan subscriptionIntroductoryOfferScheduleModel, state *tfsdk.State, diags *diag.Diagnostics) {
+//
+// An end date the plan was clearing, from an offer whose end date prior state
+// held, is recorded as Apple still holds it when the clear did not go through.
+// Recording the plan's null would hide it for good: Read never adopts an end
+// date state holds as null, and the next write would no longer count it as
+// one state managed.
+func (r *subscriptionIntroductoryOfferScheduleResource) recordCurrent(ctx context.Context, plan subscriptionIntroductoryOfferScheduleModel, prior []subscriptionIntroductoryOfferScheduleEntry, state *tfsdk.State, diags *diag.Diagnostics) {
 	subscriptionID := plan.SubscriptionID.ValueString()
 
 	offers, err := r.client.GetSubscriptionIntroductoryOffers(subscriptionID, nil)
@@ -475,7 +501,7 @@ func (r *subscriptionIntroductoryOfferScheduleResource) recordCurrent(ctx contex
 	current := subscriptionIntroductoryOfferScheduleModel{
 		ID:             types.StringValue(subscriptionID),
 		SubscriptionID: plan.SubscriptionID,
-		Offers:         reconcileIntroductoryOffers(plan.Offers, offers),
+		Offers:         reconcileIntroductoryOffers(pendingEndDates(plan.Offers, prior, offers), offers),
 	}
 	diags.Append(state.Set(ctx, current)...)
 }

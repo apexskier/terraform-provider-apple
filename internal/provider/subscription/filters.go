@@ -263,10 +263,10 @@ func introductoryOfferPricePointProblem(mode string, hasPricePoint bool) string 
 
 // offerTerritory reads an offer's territory, or "" when Apple did not populate it.
 func offerTerritory(offer models.SubscriptionIntroductoryOffer) string {
-	if offer.Relationships == nil || offer.Relationships.Territory == nil {
+	if offer.Relationships == nil {
 		return ""
 	}
-	return offer.Relationships.Territory.Data.ID
+	return territoryID(offer.Relationships.Territory).ValueString()
 }
 
 // offerPricePoint reads an offer's price point, or "" for a free trial.
@@ -422,6 +422,29 @@ func managedEndDateOffers(prior []subscriptionIntroductoryOfferScheduleEntry, ex
 		}
 	}
 	return managed
+}
+
+// pendingEndDates returns the planned entries with Apple's end date restored
+// on each one whose clear has not happened yet: an entry with no end_date,
+// matched to an offer whose end date prior state held, that Apple still
+// reports with one. Reconciling against the result records those dates rather
+// than the null the plan asked for.
+func pendingEndDates(planned, prior []subscriptionIntroductoryOfferScheduleEntry, offers []models.SubscriptionIntroductoryOffer) []subscriptionIntroductoryOfferScheduleEntry {
+	endDates := make(map[string]*string, len(offers))
+	for _, offer := range offers {
+		endDates[offer.ID] = offer.Attributes.EndDate
+	}
+
+	changes := planIntroductoryOffers(planned, offers, managedEndDateOffers(prior, offers))
+	entries := make([]subscriptionIntroductoryOfferScheduleEntry, 0, len(planned))
+	for _, kept := range changes.Keep {
+		entry := kept.Entry
+		if kept.EndDateChanged && entry.EndDate.IsNull() {
+			entry.EndDate = stringOrNull(endDates[kept.ID])
+		}
+		entries = append(entries, entry)
+	}
+	return append(entries, changes.Create...)
 }
 
 // introductoryOfferEntryFromAPI records an offer with Apple's own values, as an
